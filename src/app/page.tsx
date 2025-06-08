@@ -44,31 +44,41 @@ export default function NodeKeeperPage() {
   useEffect(() => {
     const interval = setInterval(() => {
       let leaderExists = false;
+      let nodeFailureToastParams: Parameters<typeof toast>[0] | null = null;
+      let leaderElectionToastParams: Parameters<typeof toast>[0] | null = null;
+
       const updatedNodes = nodes.map(node => {
         if (node.status === 'Offline') return node;
 
         if (node.isLeader) leaderExists = true;
 
-        // Simulate occasional missed heartbeat for non-leader nodes
         if (!node.isLeader && Math.random() < 0.02) { // 2% chance of failure simulation
           addLog(`Node ${node.id} missed heartbeat. Simulating failure.`);
-          toast({ title: "Node Issue", description: `Node ${node.id} stopped responding.`, variant: "destructive" });
+          nodeFailureToastParams = { title: "Node Issue", description: `Node ${node.id} stopped responding.`, variant: "destructive" };
           return { ...node, status: 'Offline', lastHeartbeat: Date.now(), isLeader: false };
         }
         return { ...node, lastHeartbeat: Date.now() };
       });
 
-      // Simple leader election: if no leader, first online node becomes leader
       if (!leaderExists && updatedNodes.some(n => n.status === 'Online')) {
         const firstOnlineNodeIndex = updatedNodes.findIndex(n => n.status === 'Online');
         if (firstOnlineNodeIndex !== -1) {
           updatedNodes[firstOnlineNodeIndex].isLeader = true;
           addLog(`Node ${updatedNodes[firstOnlineNodeIndex].id} elected as new leader.`);
-          toast({ title: "Leader Election", description: `Node ${updatedNodes[firstOnlineNodeIndex].id} is now the leader.` });
+          leaderElectionToastParams = { title: "Leader Election", description: `Node ${updatedNodes[firstOnlineNodeIndex].id} is now the leader.` };
         }
       }
       setNodes(updatedNodes);
-    }, 5000); // Check heartbeats every 5 seconds
+
+      if (nodeFailureToastParams) {
+        const params = nodeFailureToastParams;
+        setTimeout(() => toast(params), 0);
+      }
+      if (leaderElectionToastParams) {
+        const params = leaderElectionToastParams;
+        setTimeout(() => toast(params), 0);
+      }
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [nodes, addLog, toast]);
@@ -76,24 +86,24 @@ export default function NodeKeeperPage() {
 
   const handleOperation = useCallback((operation: 'PUT' | 'GET' | 'DELETE', key: string, value?: string, clientConnectedNodeId?: string) => {
     if (!key) {
-      toast({ title: "Error", description: "Key cannot be empty.", variant: "destructive" });
+      setTimeout(() => toast({ title: "Error", description: "Key cannot be empty.", variant: "destructive" }), 0);
       addLog("Operation failed: Key is empty.");
       return;
     }
     if (operation === 'PUT' && (typeof value === 'undefined' || value === '')) {
-      toast({ title: "Error", description: "Value cannot be empty for PUT.", variant: "destructive" });
+      setTimeout(() => toast({ title: "Error", description: "Value cannot be empty for PUT.", variant: "destructive" }), 0);
       addLog("PUT operation failed: Value is empty.");
       return;
     }
 
-    const onlineNodes = nodes.filter(n => n.status === 'Online');
-    if (onlineNodes.length === 0) {
-      toast({ title: "Error", description: "All nodes are offline. Cannot perform operation.", variant: "destructive" });
+    const currentOnlineNodes = nodes.filter(n => n.status === 'Online');
+    if (currentOnlineNodes.length === 0) {
+      setTimeout(() => toast({ title: "Error", description: "All nodes are offline. Cannot perform operation.", variant: "destructive" }), 0);
       addLog("Operation failed: All nodes offline.");
       return;
     }
     
-    const connectedNode = nodes.find(n => n.id === clientConnectedNodeId && n.status === 'Online') || onlineNodes.find(n => n.isLeader) || onlineNodes[0];
+    const connectedNode = nodes.find(n => n.id === clientConnectedNodeId && n.status === 'Online') || currentOnlineNodes.find(n => n.isLeader) || currentOnlineNodes[0];
     addLog(`Client connected to ${connectedNode.id}. Request: ${operation} ${key} ${value ? `(value: ${value.substring(0,20)}${value.length > 20 ? '...' : ''})` : ''}`);
 
     const primaryNodeIndex = getPrimaryNodeIndexForKey(key, nodes.length);
@@ -105,20 +115,20 @@ export default function NodeKeeperPage() {
       addLog(`Primary node ${primaryNode.id} for key '${key}' is offline. Operation may target replicas.`);
     }
 
+    let deferredToastParams: Parameters<typeof toast>[0] | null = null;
 
     setNodes(prevNodes => {
-      const newNodes = prevNodes.map(n => ({...n, data: {...n.data}})); // Deep copy for modification
+      const newNodes = prevNodes.map(n => ({...n, data: {...n.data}})); 
 
-      // Determine replication targets
       const potentialTargets = newNodes.filter(n => n.status === 'Online');
       if (potentialTargets.length === 0 && operation !== 'GET') {
-        toast({ title: "Error", description: `No online nodes available for ${operation} on key '${key}'.`, variant: "destructive" });
+        deferredToastParams = { title: "Error", description: `No online nodes available for ${operation} on key '${key}'.`, variant: "destructive" };
         addLog(`${operation} for key '${key}' failed. No online nodes.`);
         return prevNodes;
       }
 
       const replicationNodes: Node[] = [];
-      let startIndex = primaryNodeIndex;
+      let startIndex = getPrimaryNodeIndexForKey(key, newNodes.length); // Use newNodes.length for current context
       
       for (let i = 0; i < newNodes.length && replicationNodes.length < REPLICATION_FACTOR; i++) {
           const currentNodeIndex = (startIndex + i) % newNodes.length;
@@ -127,17 +137,17 @@ export default function NodeKeeperPage() {
           }
       }
       
+      let replicationIssueNoted = false;
       if (replicationNodes.length === 0 && operation !== 'GET') {
          addLog(`Not enough online nodes to meet replication factor for ${operation} on key '${key}'.`);
-         toast({ title: "Warning", description: `Could not fully replicate ${key}. Limited online nodes.`, variant: "default" });
-         // If no nodes at all, this was caught earlier. This is for < REPLICATION_FACTOR but > 0
-         if (potentialTargets.length > 0 && operation !== 'GET') replicationNodes.push(potentialTargets[0]); // Fallback to at least one if possible
-         else if (operation !== 'GET') {
-            toast({ title: "Error", description: `Failed to ${operation} key '${key}'. No online nodes.`, variant: "destructive" });
+         deferredToastParams = { title: "Warning", description: `Could not fully replicate ${key}. Limited online nodes.`, variant: "default" };
+         replicationIssueNoted = true;
+         if (potentialTargets.length > 0 && operation !== 'GET') replicationNodes.push(potentialTargets[0]);
+         else {
+            deferredToastParams = { title: "Error", description: `Failed to ${operation} key '${key}'. No online nodes.`, variant: "destructive" };
             return prevNodes;
          }
       }
-
 
       switch (operation) {
         case 'PUT':
@@ -149,9 +159,9 @@ export default function NodeKeeperPage() {
               putCount++;
             });
             if (putCount > 0) {
-              toast({ title: "Success", description: `Key '${key}' set on ${putCount} node(s).` });
+              if (!replicationIssueNoted) deferredToastParams = { title: "Success", description: `Key '${key}' set on ${putCount} node(s).` };
             } else {
-               toast({ title: "Error", description: `Failed to PUT key '${key}'. No suitable node found.`, variant: "destructive" });
+               if (!replicationIssueNoted) deferredToastParams = { title: "Error", description: `Failed to PUT key '${key}'. No suitable node found.`, variant: "destructive" };
             }
           }
           break;
@@ -159,12 +169,11 @@ export default function NodeKeeperPage() {
           let foundValue: string | undefined = undefined;
           let foundOnNode: string | undefined = undefined;
 
-          // Try primary first, then others in replication group, then any online node
           const orderedNodesToQuery = [
-            newNodes[primaryNodeIndex], 
-            ...replicationNodes.filter(n => n.id !== newNodes[primaryNodeIndex].id),
-            ...potentialTargets.filter(n => !replicationNodes.find(rn => rn.id === n.id) && n.id !== newNodes[primaryNodeIndex].id)
-          ];
+            newNodes[getPrimaryNodeIndexForKey(key, newNodes.length)], 
+            ...replicationNodes.filter(n => n.id !== newNodes[getPrimaryNodeIndexForKey(key, newNodes.length)].id),
+            ...potentialTargets.filter(n => !replicationNodes.find(rn => rn.id === n.id) && n.id !== newNodes[getPrimaryNodeIndexForKey(key, newNodes.length)].id)
+          ].filter(Boolean); // filter(Boolean) to remove undefined if primary node was offline and not in newNodes
           
           for (const nodeToQuery of orderedNodesToQuery) {
             if (nodeToQuery && nodeToQuery.status === 'Online' && key in nodeToQuery.data) {
@@ -176,10 +185,11 @@ export default function NodeKeeperPage() {
 
           if (typeof foundValue !== 'undefined' && foundOnNode) {
             addLog(`Key '${key}' GET from Node ${foundOnNode}. Value: ${foundValue}`);
-            toast({ title: "Success", description: `Key '${key}' retrieved from ${foundOnNode}: ${foundValue.substring(0,50)}${foundValue.length > 50 ? '...' : ''}` });
+            const valSub = `${foundValue.substring(0,50)}${foundValue.length > 50 ? '...' : ''}`;
+            deferredToastParams = { title: "Success", description: `Key '${key}' retrieved from ${foundOnNode}: ${valSub}` };
           } else {
             addLog(`Key '${key}' NOT FOUND in any active node.`);
-            toast({ title: "Not Found", description: `Key '${key}' not found.`, variant: "destructive" });
+            deferredToastParams = { title: "Not Found", description: `Key '${key}' not found.`, variant: "destructive" };
           }
           break;
         case 'DELETE':
@@ -192,65 +202,80 @@ export default function NodeKeeperPage() {
              }
           });
           if (deletedCount > 0) {
-            toast({ title: "Success", description: `Key '${key}' deleted from ${deletedCount} node(s).` });
+            if (!replicationIssueNoted) deferredToastParams = { title: "Success", description: `Key '${key}' deleted from ${deletedCount} node(s).` };
           } else {
             addLog(`Key '${key}' NOT FOUND for deletion.`);
-            toast({ title: "Not Found", description: `Key '${key}' not found for deletion.`, variant: "destructive" });
+            deferredToastParams = { title: "Not Found", description: `Key '${key}' not found for deletion.`, variant: "destructive" };
           }
           break;
       }
       return newNodes;
     });
+
+    if (deferredToastParams) {
+      const params = deferredToastParams;
+      setTimeout(() => toast(params), 0);
+    }
   }, [nodes, addLog, toast]);
 
   const toggleNodeStatus = useCallback((nodeId: string) => {
+    let deferredToastParams: Parameters<typeof toast>[0] | null = null;
+
     setNodes(prevNodes => {
-      const newNodes = [...prevNodes];
+      const newNodes = [...prevNodes]; // Create a mutable copy
       const nodeIndex = newNodes.findIndex(n => n.id === nodeId);
       if (nodeIndex === -1) return prevNodes;
 
       const node = newNodes[nodeIndex];
       const newStatus = node.status === 'Online' ? 'Offline' : 'Online';
       addLog(`Node ${node.id} status changed to ${newStatus}.`);
-      toast({ title: "Node Status Update", description: `Node ${node.id} is now ${newStatus}.`});
+      deferredToastParams = { title: "Node Status Update", description: `Node ${node.id} is now ${newStatus}.`};
       
       newNodes[nodeIndex] = { ...node, status: newStatus };
 
       if (newStatus === 'Offline' && node.isLeader) {
         newNodes[nodeIndex].isLeader = false;
         addLog(`Leader ${node.id} went offline. Triggering leader election.`);
-        // Leader election will be handled by the useEffect hook in the next cycle
       }
       
       if (newStatus === 'Online') {
         newNodes[nodeIndex].lastHeartbeat = Date.now();
         addLog(`Node ${node.id} is back online. Simulating data recovery...`);
-        // Simulate snapshot recovery: copy data for keys this node should own from other online nodes
         const onlineReplicas = newNodes.filter(n => n.status === 'Online' && n.id !== nodeId);
         if(onlineReplicas.length > 0) {
-          for (let i = 0; i < newNodes.length; i++) { // Iterate over all possible keys by checking other nodes
-            const tempKeyOwnerIndex = getPrimaryNodeIndexForKey(Object.keys(onlineReplicas[0].data)[i] || `key_for_node_${nodeIndex}`, newNodes.length); // Example key generation
-            if(tempKeyOwnerIndex === nodeIndex) { // If this node should own this key (or be a replica for it)
-              // Find the key on another node and copy it
+          const currentNodesLength = newNodes.length; // Use consistent length for hashing
+          // Iterate over a representative set of keys, e.g., from one of the replicas.
+          // A more robust system might have a global key list or specific recovery protocol.
+          const sampleKeys = new Set<string>();
+          onlineReplicas.forEach(r => Object.keys(r.data).forEach(k => sampleKeys.add(k)));
+
+          sampleKeys.forEach(k => {
+            const keyPrimaryNodeIndex = getPrimaryNodeIndexForKey(k, currentNodesLength);
+            // Node recovers if it's primary or a designated replica (e.g., next one for simplicity)
+            const isResponsibleForKey = keyPrimaryNodeIndex === nodeIndex || 
+                                       (keyPrimaryNodeIndex + 1) % currentNodesLength === nodeIndex;
+
+            if (isResponsibleForKey && !(k in newNodes[nodeIndex].data)) {
               for(const replica of onlineReplicas) {
-                Object.keys(replica.data).forEach(k => {
-                   // A more robust check for key ownership/replication strategy would be needed here
-                   if (getPrimaryNodeIndexForKey(k, newNodes.length) === nodeIndex || (getPrimaryNodeIndexForKey(k, newNodes.length) + 1) % newNodes.length === nodeIndex ) { // Simple check
-                     if (!(k in newNodes[nodeIndex].data)) { // If not already present (e.g. from partial failure)
-                        newNodes[nodeIndex].data[k] = replica.data[k];
-                        addLog(`Recovered key '${k}' for Node ${node.id} from Node ${replica.id}.`);
-                     }
-                   }
-                });
+                if (k in replica.data) {
+                  newNodes[nodeIndex].data[k] = replica.data[k];
+                  addLog(`Recovered key '${k}' for Node ${newNodes[nodeIndex].id} from Node ${replica.id}.`);
+                  break; 
+                }
               }
             }
-          }
+          });
         } else {
-            addLog(`No online replicas to recover data for Node ${node.id}. It will start empty or with existing data.`);
+            addLog(`No online replicas to recover data for Node ${newNodes[nodeIndex].id}. It will start empty or with existing data.`);
         }
       }
       return newNodes;
     });
+
+    if (deferredToastParams) {
+      const params = deferredToastParams;
+      setTimeout(() => toast(params), 0);
+    }
   }, [addLog, toast]);
   
 
