@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Server, ServerCrash, Zap, Power, PowerOff } from 'lucide-react';
+import { useState, useEffect } from 'react';
 
 interface NodeStatusCardProps {
   node: Node;
@@ -10,6 +11,12 @@ interface NodeStatusCardProps {
 }
 
 export default function NodeStatusCard({ node, onToggleStatus }: NodeStatusCardProps) {
+  const [formattedHeartbeat, setFormattedHeartbeat] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFormattedHeartbeat(new Date(node.lastHeartbeat).toLocaleTimeString());
+  }, [node.lastHeartbeat]);
+
   const statusColor = node.status === 'Online' ? 'bg-green-500' : node.status === 'Offline' ? 'bg-red-500' : 'bg-yellow-500';
   const StatusIcon = node.status === 'Online' ? Server : ServerCrash;
   
@@ -33,7 +40,7 @@ export default function NodeStatusCard({ node, onToggleStatus }: NodeStatusCardP
       <CardContent>
         <div className="text-sm space-y-1">
           <p>Keys stored: <span className="font-semibold font-code">{Object.keys(node.data).length}</span></p>
-          <p>Last heartbeat: <span className="font-semibold">{new Date(node.lastHeartbeat).toLocaleTimeString()}</span></p>
+          <p>Last heartbeat: <span className="font-semibold">{formattedHeartbeat || 'Loading...'}</span></p>
         </div>
       </CardContent>
       <CardFooter>
