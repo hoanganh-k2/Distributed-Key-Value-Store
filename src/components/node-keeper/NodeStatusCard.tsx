@@ -1,3 +1,4 @@
+
 import type { Node } from './types';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,8 @@ export default function NodeStatusCard({ node, onToggleStatus }: NodeStatusCardP
   const [formattedHeartbeat, setFormattedHeartbeat] = useState<string | null>(null);
 
   useEffect(() => {
+    // This ensures toLocaleTimeString is called only on the client side
+    // after the initial hydration.
     setFormattedHeartbeat(new Date(node.lastHeartbeat).toLocaleTimeString());
   }, [node.lastHeartbeat]);
 
@@ -40,7 +43,7 @@ export default function NodeStatusCard({ node, onToggleStatus }: NodeStatusCardP
       <CardContent>
         <div className="text-sm space-y-1">
           <p>Keys stored: <span className="font-semibold font-code">{Object.keys(node.data).length}</span></p>
-          <p>Last heartbeat: <span className="font-semibold">{formattedHeartbeat || 'Loading...'}</span></p>
+          <p>Last heartbeat: <span className="font-semibold">{formattedHeartbeat || 'Calculating...'}</span></p>
         </div>
       </CardContent>
       <CardFooter>
