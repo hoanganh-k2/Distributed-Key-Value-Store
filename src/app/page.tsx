@@ -281,7 +281,10 @@ export default function NodeKeeperPage() {
   
 
   return (
-    <div className="min-h-screen bg-background flex flex-col selection:bg-accent selection:text-accent-foreground">
+    <div 
+      className="min-h-screen bg-background flex flex-col selection:bg-accent selection:text-accent-foreground"
+      suppressHydrationWarning={true}
+    >
       <AppHeader />
       <main className="flex-grow container mx-auto p-4 md:p-8 space-y-8">
         <NodeDashboard nodes={nodes} onToggleStatus={toggleNodeStatus} />
